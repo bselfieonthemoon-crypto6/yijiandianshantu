@@ -1,0 +1,91 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  SOURCE_ZIP: https://github.com/amou666/yijiandianshantu/archive/refs/heads/main.zip
+  SOURCE_DIR: yijiandianshantu-main
+  OLD_CUSTOM_API_KEY: sk-OMuGexDTGBzkkpxlCf2620Eb783e4a3e81875882D9E27a4b
+  CUSTOM_API_KEY: sk-ZJwvPZKthMNofFxJ24B1D475DdAc44Aa92A5Ad93F95dBcF3
+  CUSTOM_API_ENDPOINT: https://api.apiyi.com/v1/chat/completions
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source
+        run: |
+          curl -L "$SOURCE_ZIP" -o source.zip
+          unzip -q source.zip
+          shopt -s dotglob
+          mv "$SOURCE_DIR"/* .
+          rm -rf "$SOURCE_DIR" source.zip
+
+      - name: Patch source for GitHub Pages
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const files = ['vite.config.ts', '.env.example', 'src/App.tsx', 'src/PartialEditPage.tsx'];
+          const oldKey = process.env.OLD_CUSTOM_API_KEY;
+          const newKey = process.env.CUSTOM_API_KEY;
+          for (const file of files) {
+            if (!fs.existsSync(file)) continue;
+            let content = fs.readFileSync(file, 'utf8');
+            content = content.split(oldKey).join(newKey);
+            fs.writeFileSync(file, content);
+          }
+
+          const configPath = 'vite.config.ts';
+          let config = fs.readFileSync(configPath, 'utf8');
+          if (!config.includes("base: '/yijiandianshantu/'")) {
+            config = config.replace('return {\n', "return {\n    base: '/yijiandianshantu/',\n");
+          }
+          fs.writeFileSync(configPath, config);
+          NODE
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Add SPA fallback
+        run: cp dist/index.html dist/404.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
